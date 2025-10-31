@@ -1,0 +1,17 @@
+# Use official Python image
+FROM python:3.14-slim
+
+# Set work directory
+WORKDIR /app/sensor
+
+# Copy server code
+COPY . .
+
+# Install dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose port
+EXPOSE 8000
+
+# Default command: run a single sensor
+CMD ["python", "sensor.py", "--sensorId=0"]

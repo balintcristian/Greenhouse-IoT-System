@@ -1,0 +1,60 @@
+services:
+  server:
+    build: ./server
+    container_name: greenhouse_server
+    ports:
+      - "8000:8000"
+    networks:
+      - greenhouse_network
+
+  sensor1:
+    build: ./client
+    container_name: client1
+    environment:
+      - sensorId=client1
+      - IP=server
+      - PORT=8000
+      - DELAY=1.0
+      - LATITUDE=45.0
+      - JITTER=0.1
+      - TZ=Europe/Bucharest
+    depends_on:
+      - server
+    networks:
+      - greenhouse_network
+
+  sensor2:
+    build: ./client
+    container_name: client2
+    environment:
+      - sensorId=client2
+      - IP=server
+      - PORT=8000
+      - DELAY=1.2
+      - LATITUDE=50.0
+      - JITTER=0.15
+      - TZ=Europe/Bucharest
+    depends_on:
+      - server
+    networks:
+      - greenhouse_network
+
+  sensor3:
+    build: .\client
+    container_name: client3
+    environment:
+      - client_ID=client3
+      - IP=server
+      - PORT=8000
+      - DELAY=1.5
+      - LATITUDE=55.0
+      - JITTER=0.2
+      - TZ=Europe/Bucharest
+    depends_on:
+      - server
+    networks:
+      - greenhouse_network
+
+networks:
+  greenhouse_network:
+    driver: bridge
