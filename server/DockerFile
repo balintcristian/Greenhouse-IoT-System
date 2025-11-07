@@ -9,7 +9,7 @@ COPY . .
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
-
+RUN touch sensor_log.jsonl
 # Expose port
 EXPOSE 8000
 

@@ -11,7 +11,7 @@ def simulate_sensor(
     base_temp:float=20.0,
     base_humidity:float=0.5,
     noise:float=0.02,
-    delay:float=1.0,
+    delay:float=3.0,
     latitude:float=1.0,
     jitter:float=0.1,
     tz: str = "Europe/Bucharest",
@@ -88,33 +88,33 @@ def run_sensor(
 
 
 if __name__ == "__main__":
-    # import argparse
-    # parser = argparse.ArgumentParser(description="Run sensor with configurable parameters")
-    # parser.add_argument("--sensorId", type=str, required=True, help="Sensor id, mandatory")
-    # parser.add_argument("--ip", type=str, default="127.0.0.1", help="Target server IP to send data")
-    # parser.add_argument("--port", type=int, default=8000, help="Port to access server")
-    # parser.add_argument("--delay", type=float, default=1.0, help="Delay between readings in seconds")
-    # parser.add_argument("--latitude", type=float, default=0.0, help="Latitude for seasonal variations")
-    # parser.add_argument("--jitter", type=float, default=0.1, help="Random delay jitter in seconds")
-    # parser.add_argument("--tz", type=str, default="Europe/Bucharest", help="Timezone for timestamp")
+    import argparse
+    parser = argparse.ArgumentParser(description="Run sensor with configurable parameters")
+    parser.add_argument("--sensorId", type=str, required=True, help="Sensor id, mandatory")
+    parser.add_argument("--ip", type=str, default="127.0.0.1", help="Target server IP to send data")
+    parser.add_argument("--port", type=int, default=8000, help="Port to access server")
+    parser.add_argument("--delay", type=float, default=3.0, help="Delay between readings in seconds")
+    parser.add_argument("--latitude", type=float, default=0.0, help="Latitude for seasonal variations")
+    parser.add_argument("--jitter", type=float, default=0.1, help="Random delay jitter in seconds")
+    parser.add_argument("--tz", type=str, default="Europe/Bucharest", help="Timezone for timestamp")
 
-    # args = parser.parse_args()
-    # print(f"Running sensor with arguments: {args}")
+    args = parser.parse_args()
+    print(f"Running sensor with arguments: {args}")
 
-    # run_sensor(
-    #     sensor_id=args.sensorId,
-    #     ip=args.ip,
-    #     port=args.port,
-    #     delay=args.delay,
-    #     latitude=args.latitude,
-    #     jitter=args.jitter,
-    #     tz=args.tz
-    # )
-    sensor_id = os.getenv("SENSOR_ID", "SENSOR1")
-    server_ip = os.getenv("SERVER_IP", "server")
-    server_port = int(os.getenv("SERVER_PORT", 8000))
-    delay = float(os.getenv("DELAY", 1.0))
-    latitude = float(os.getenv("LATITUDE", 0.0))
-    jitter = float(os.getenv("JITTER", 0.1))
-    tz = os.getenv("TZ", "Europe/Bucharest")
-    run_sensor(sensor_id, server_ip, server_port, delay, latitude, jitter, tz)
+    run_sensor(
+        sensor_id=args.sensorId,
+        ip=args.ip,
+        port=args.port,
+        delay=args.delay,
+        latitude=args.latitude,
+        jitter=args.jitter,
+        tz=args.tz
+    )
+    # sensor_id = os.getenv("SENSOR_ID", "SENSOR1")
+    # server_ip = os.getenv("SERVER_IP", "server")
+    # server_port = int(os.getenv("SERVER_PORT", 8000))
+    # delay = float(os.getenv("DELAY", 1.0))
+    # latitude = float(os.getenv("LATITUDE", 0.0))
+    # jitter = float(os.getenv("JITTER", 0.1))
+    # tz = os.getenv("TZ", "Europe/Bucharest")
+    # run_sensor(sensor_id, server_ip, server_port, delay, latitude, jitter, tz)

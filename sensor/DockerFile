@@ -14,4 +14,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 EXPOSE 8000
 
 # Default command: run a single sensor
-CMD ["python", "sensor.py", "--sensorId=0"]
+CMD ["python", "sensor.py"]
