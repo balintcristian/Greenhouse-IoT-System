@@ -1,60 +1,51 @@
-import time
-import random
-from datetime import datetime
-import multiprocessing as mp
-
 import numpy as np
 import math
-from multiprocessing import Manager
+import random
+import time
+from datetime import datetime
+import multiprocessing as mp
+import queue  # for Empty exception
+from multiprocessing import Manager,queues
+from typing import List
 import asyncio
 import paho.mqtt.client as mqtt
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
-from typing import List
-from datetime import datetime
+
 import argparse
 from urllib.parse import quote_plus
 from urllib.parse import quote_plus
-import ssl
-
 import json
+
+import csv
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+from pathlib import Path
+import threading
+
 
 class Location:
     latitude,longitude=0,0
 
-def locTempNoise(latitude:float):
-    """
-    Generates a random temperature offset (noise) in Celsius for a given latitude.
 
-    This offset simulates daily weather variation. The variation range is wider
-    at mid-latitudes/poles and narrower near the equator.
 
-    Returns:
-        float: A random reading noise inside a range based on latitude
-    """
-    # Base variability range (e.g., 8 degrees C standard fluctuation)
-    BASE_VARIABILITY = 2.0
+def logger_loop(log_queue, stop_event):
+    while not stop_event.is_set():
+        try:
+            msg = log_queue.get(timeout=0.5)
+            if msg is None:
+                continue
+            print(msg)
+        except queue.Empty:
+            continue
+        except OSError:
+            break
 
-    # Adjust variability: more stable near equator, more variable near poles
-    # Scale the base variability by how far from the equator you are (0=equator, 1=pole)
-    variability_scale = abs(latitude) / 90.0
-    current_variability_range = BASE_VARIABILITY * (0.5 + variability_scale * 0.5)
-
-    # Generate a random offset reading within the calculated range
-    offset = random.uniform(-current_variability_range, current_variability_range)
-
-    return round(offset, 2)
-    
-def logger_loop(log_queue):
-    while True:
-        msg = log_queue.get()
-        print(msg)
-
+VALID_TYPES = ("temperature", "humidity", "moisture")
 class Sensor:
-    VALID_TYPES = ("temperature", "humidity", "moisture")
     def __init__(self, sensor_id:str,sensor_type:str,shared_mem,location:Location|float|None=None):
-        if sensor_type not in self.VALID_TYPES:
-            raise ValueError(f"Invalid sensor_type: {sensor_type}\n Valid types: {self.VALID_TYPES}")
+        if sensor_type not in VALID_TYPES:
+            raise ValueError(f"Invalid sensor_type: {sensor_type}\n Valid types: {VALID_TYPES}")
         self.sensor_id = sensor_id
         self.sensor_type= sensor_type
         self.shared_mem= shared_mem
@@ -64,9 +55,9 @@ class Sensor:
         elif isinstance(location, float):
             lat = location
         else:
-            lat = math.degrees(math.asin(0.0))
+            lat = 45.0
         self.latitude = lat
-        self.locTempNoise = locTempNoise(lat)
+        self.locTempNoise = random.uniform(-1,1)
         #locational noise for each sensor
     async def getValue(self):
         return {"value":round(self.shared_mem[self.sensor_type]+self.locTempNoise,2),"time":self.shared_mem['time'].isoformat()}
@@ -78,172 +69,236 @@ class Sensor:
         'latitude':'{self.latitude}'
         'locationalNoise':'{self.locTempNoise}'\n"""
 
-async def gateway_loop(sensors: List[Sensor], log_queue, poll_interval=0.5, mqtt_host="192.168.0.38", mqtt_port=8883):
+class Actuator:
+    def __init__(self,id:str,type:str,shared_mem,log_queue,is_on=False,mode:str|None=None):
+        if type not in VALID_TYPES:
+            raise ValueError(f"Invalid actuator type: {type}\n Valid types: {VALID_TYPES}")
+        self.id=id
+        self.type=type
+        self.shared_mem=shared_mem
+        self.log_queue=log_queue
+        self.is_on=is_on
+        self.device = self._assign_device(mode)
+        if self.device not in shared_mem:
+            shared_mem[self.device] = False
+    def _assign_device(self, mode):
+        """Assign correct device based on actuator type and mode."""
 
+        device_map = {
+            "temperature": ["heater", "fan"],
+            "moisture": ["pump"],
+            "humidity": ["humidifier", "dehumidifier"]
+        }
+
+        valid_devices = device_map[self.type]
+
+        # If only one device exists, return it
+        if len(valid_devices) == 1:
+            return valid_devices[0]
+
+        # If multiple devices exist (temperature or humidity):
+        if mode is None:
+            raise ValueError(
+                f"Actuator type '{self.type}' requires a mode: {valid_devices}"
+            )
+
+        if mode not in valid_devices:
+            raise ValueError(
+                f"Invalid mode '{mode}' for type '{self.type}'. "
+                f"Choose one of: {valid_devices}"
+            )
+
+        return mode
+    
+    def toggleActuator(self):
+        new_state = not self.is_on
+        try:
+            self.log_queue.put_nowait(
+                f"{self.id} ({self.type}:{self.device}) toggled {'ON' if new_state else 'OFF'}"
+            )
+            self.log_queue.put_nowait(
+                f"Device '{self.device}' is now {'running' if new_state else 'stopped'}"
+            )
+        except Exception:
+            print(f"[LOG-FAIL] {self.id} toggled {'ON' if new_state else 'OFF'}")
+        self.is_on = new_state
+        self.shared_mem[self.device] = new_state
+
+
+
+async def gateway_loop(sensors: List[Sensor],actuators:List[Actuator], log_queue:mp.Queue, poll_interval=2, mqtt_host="192.168.0.38", mqtt_port=8883):
     client = mqtt.Client(client_id="gateway-publisher", clean_session=False)
     try:
         client.connect(mqtt_host, mqtt_port)
         client.loop_start()
-        log_queue.put(f"MQTT connected to {mqtt_host}:{mqtt_port}")
+        log_queue.put_nowait(f"MQTT connected to {mqtt_host}:{mqtt_port}")
     except Exception as e:
-        log_queue.put(f"MQTT connection failed: {e}")
+        log_queue.put_nowait(f"MQTT connection failed: {e}")
         return
-    
     while True:
+        count=0
+        for sensor in sensors:
+            count +=1
+        if count<1:
+            raise Exception("No sensors present")
         try:
             tasks = [sensor.getValue() for sensor in sensors]
             readings = await asyncio.gather(*tasks)
             for sensor, reading in zip(sensors, readings):
                 topic = f"sensors/{sensor.sensor_type}/{sensor.sensor_id}"
+                temp_val=reading.get('value')
                 payload = json.dumps({
                     "value": reading.get("value"),
                     "time": reading.get("time")
                 })
                 try:
+                    specificActuator:Actuator=next(a for a in actuators if a.device=="heater")
+                    if temp_val:
+                        if specificActuator.is_on==False and temp_val<15:
+                            specificActuator.toggleActuator()
+                        elif specificActuator.is_on==True and temp_val>20:
+                            specificActuator.toggleActuator()
+                        else:
+                            pass
                     client.publish(topic, payload, qos=1, retain=True)
-                    log_queue.put(f"Published {payload} to {topic}")
+                    log_queue.put_nowait(f"Published {payload} to {topic}")
                 except Exception as e:
-                    log_queue.put(f"MQTT publish error for {sensor.sensor_id}: {e}")
+                    log_queue.put_nowait(f"MQTT publish error for {sensor.sensor_id}: {e}")
             await asyncio.sleep(poll_interval)
         except Exception as e:
-            log_queue.put(f"Gateway loop error: {e}")
+            log_queue.put_nowait(f"Gateway loop error: {e}")
 
 class EnvironmentState:
     """Tracks environment variables and gradual control tilts"""
     def __init__(self, latitude=None):
         self.latitude = latitude if latitude is not None else math.degrees(math.asin(0.0))
-        self.temperature = 15.0
+        self.temperature = random.uniform(15, 20)
         self.humidity = 70.0
         self.moisture = random.uniform(300, 600)
         self.time = datetime.now()
         self.start_time = time.time()
-        
+        self.start_day=90
         # Gradual control tilts
         self.temp_tilt = 0.0
         self.hum_tilt = 0.0
         self.moist_tilt = 0.0
 
+    def temperature_func(self, t_days, fan=False, heater=False, alpha=0.05):
+        """
+        Realistic Earth-like temperature function with wide but realistic variations.
+        """
 
-def temperature_func(t_days, env, fan=False, heater=False, alpha=0.01):
-    """
-    Realistic Earth-like temperature model:
-    - Very small seasonal variation at equator
-    - Large swing near poles
-    - Daily cycle
-    - Slowly growing climate noise
-    - Gradual heater/fan tilt
-    """
+        # Normalize latitude
+        lat_norm = abs(self.latitude) / 90.0  # 0=equator, 1=pole
 
-    # ===== 1. Baseline temperature by latitude =====
-    # Realistic approximation:
-    #   Equator ~27°C, mid-lat ~15°C, poles ~ -5°C
-    lat_norm = abs(env.latitude) / 90.0
-    BASE_TEMP = 27 - 22 * lat_norm     # 27→5°C
+        # BASE temperature: equator 27°C, mid-lat 15°C, poles -5°C
+        BASE_TEMP = 27 - 32 * lat_norm  # 27→-5°C
 
-    # ===== 2. Seasonal amplitude by latitude =====
-    # Equator ~1°C, mid-lat ~10°C, poles ~25°C
-    A_seasonal = 1 + 24 * lat_norm
+        # Seasonal amplitude: small at equator, bigger at poles
+        A_seasonal = 3 + 20 * lat_norm  # equator 3°C, poles 23°C
+        seasonal = A_seasonal * np.sin(2 * np.pi * (t_days / 365 - 0.25))
 
-    # Peak at mid-year (day ~182)
-    seasonal = A_seasonal * np.sin(2 * np.pi * (t_days / 365 - 0.25))
+        # Daily amplitude: larger at equator, smaller at poles
+        A_daily = 8 - 6 * lat_norm  # equator 8°C, poles 2°C
+        frac = t_days % 1
+        daily = A_daily * np.sin(2 * np.pi * frac - np.pi/2)
 
-    # ===== 3. Daily cycle =====
-    A_daily = 4 - 2 * lat_norm        # equator 4°C swing → poles 2°C
-    frac = t_days % 1
-    daily = A_daily * np.sin(2 * np.pi * frac - np.pi/2)
+        # Noise
+        years_passed = (time.time() - self.start_time) / (365*24*3600)
+        noise_std = 0.3 + 0.02 * years_passed
+        noise = np.random.normal(0, noise_std)
 
-    # ===== 4. Slowly increasing noise =====
-    years_passed = (time.time() - env.start_time) / (365*24*3600)
-    noise_std = 0.3 + 0.02 * years_passed
-    noise = np.random.normal(0, noise_std)
+        # Combine
+        temp = BASE_TEMP + seasonal + daily + noise
 
-    # ===== 5. Combine base model =====
-    temp = BASE_TEMP + seasonal + daily + noise
+        # Gradual fan/heater tilt
+        target_delta = 0
+        if fan: target_delta -= 3
+        if heater: target_delta += 3
+        self.temp_tilt += alpha * (target_delta - self.temp_tilt)
+        temp += self.temp_tilt
 
-    # ===== 6. Gradual heater/fan tilt (your requirement) =====
-    target_delta = 0
-    if fan: target_delta -= 3
-    if heater: target_delta += 3
+        # Clamp to realistic Earth-like limits
+        temp = max(min(temp, 50), -20)
 
-    env.temp_tilt += alpha * (target_delta - env.temp_tilt)
-    temp += env.temp_tilt
+        self.temperature = temp
+        return temp
 
-    return temp
+    def humidity_func(self, t_days, humidifier=False, dehumidifier=False, alpha=0.01):
+        """Humidity depends on temperature, moisture, diurnal cycle, and gradual controls"""
+        base_humidity = 70.0
+        hum = base_humidity - 0.5 * max(self.temperature, 0)
+        
+        # Diurnal and moisture effects
+        daily = 5 * np.sin(2 * np.pi * (t_days % 1))
+        moisture_effect = (self.moisture - 500) / 200.0
+        hum += daily + moisture_effect
+        
+        # Noise
+        hum += np.random.normal(0, 3)
+        
+        # Gradual control tilt
+        target_delta = 0.0
+        if humidifier: target_delta += 10.0
+        if dehumidifier: target_delta -= 10.0
+        self.hum_tilt += alpha * (target_delta - self.hum_tilt)
+        hum += self.hum_tilt
+        self.humidity=float(np.clip(hum, 0, 100))
+        return float(np.clip(hum, 0, 100))
 
-def humidity_func(temp, moisture, t_days, env, humidifier=False, dehumidifier=False, alpha=0.01):
-    """Humidity depends on temperature, moisture, diurnal cycle, and gradual controls"""
-    base_humidity = 70.0
-    hum = base_humidity - 0.5 * max(temp, 0)
-    
-    # Diurnal and moisture effects
-    daily = 5 * np.sin(2 * np.pi * (t_days % 1))
-    moisture_effect = (moisture - 500) / 200.0
-    hum += daily + moisture_effect
-    
-    # Noise
-    hum += np.random.normal(0, 3)
-    
-    # Gradual control tilt
-    target_delta = 0.0
-    if humidifier: target_delta += 10.0
-    if dehumidifier: target_delta -= 10.0
-    env.hum_tilt += alpha * (target_delta - env.hum_tilt)
-    hum += env.hum_tilt
-    
-    return float(np.clip(hum, 0, 100))
+    def evaporation_rate(self, t_day):
+        """Dynamic evaporation rate in mm/day"""
+        if self.moisture > 700:
+            base_evap = random.uniform(2, 12)
+        else:
+            base_evap = 0.0
+        
+        evap_max = 1.5
+        evap = evap_max * max(self.temperature / 25, 0) * (1 - self.humidity / 100)
+        
+        diurnal_factor = max(0, np.sin(2 * np.pi * t_day))
+        evap *= diurnal_factor
+        
+        return min(evap + base_evap, 12)
 
-def evaporation_rate(soil_moisture, temperature, humidity, t_day):
-    """Dynamic evaporation rate in mm/day"""
-    if soil_moisture > 700:
-        base_evap = random.uniform(2, 12)
-    else:
-        base_evap = 0.0
-    
-    evap_max = 1.5
-    evap = evap_max * max(temperature / 25, 0) * (1 - humidity / 100)
-    
-    diurnal_factor = max(0, np.sin(2 * np.pi * t_day))
-    evap *= diurnal_factor
-    
-    return min(evap + base_evap, 12)
+    def moisture_func(self, t_day, pump=False, alpha=0.01):
+        """Update soil moisture with evaporation and gradual pump effect"""
+        evap_mm_day = self.evaporation_rate( t_day)
+        evap_per_sec = evap_mm_day / (24*60*60)
+        moisture = self.moisture - evap_per_sec
+        
+        # Gradual pump tilt
+        target_delta = 0.0
+        if pump: target_delta += 50.0
+        self.moist_tilt += alpha * (target_delta - self.moist_tilt)
+        moisture += self.moist_tilt
+        self.moisture=float(np.clip(moisture, 0, 1000))
+        return float(np.clip(moisture, 0, 1000))
 
-def moisture_func(prev_moisture, temperature, humidity, t_day, env, pump=False, alpha=0.01):
-    """Update soil moisture with evaporation and gradual pump effect"""
-    evap_mm_day = evaporation_rate(prev_moisture, temperature, humidity, t_day)
-    evap_per_sec = evap_mm_day / (24*60*60)
-    moisture = prev_moisture - evap_per_sec
-    
-    # Gradual pump tilt
-    target_delta = 0.0
-    if pump: target_delta += 50.0
-    env.moist_tilt += alpha * (target_delta - env.moist_tilt)
-    moisture += env.moist_tilt
-    
-    return float(np.clip(moisture, 0, 1000))
-
-def environment_process(shared_mem, ready_event, time_acceleration=24):
+def environment_process(shared_mem, ready_event, time_acceleration:float|None=None):
     """
     Environment simulation loop.
-    time_acceleration: number of simulated seconds per real second (24 = 1 real hour = 1 simulated day)
+    time_acceleration: number of simulated seconds per real second (time_acceleration 24 => 1 real hour = 1 simulated day)
     """
-    env = EnvironmentState()
+    time_acceleration =time_acceleration if time_acceleration else (365 * 24 * 3600) / (0.5 * 3600)
+
+    env = EnvironmentState(latitude=45.0)
     
     alpha = 0.01  # tilt smoothing factor
     
     while True:
         # Accelerated simulation time
         t_sim = (time.time() - env.start_time) * time_acceleration
-        t_days = t_sim / (24*60*60)
+        t_days = env.start_day + (t_sim / (24*60*60))
         # Read controls
         fan = shared_mem.get('fan', False)
         heater = shared_mem.get('heater', False)
         pump = shared_mem.get('pump', False)
         humidifier = shared_mem.get('humidifier', False)
         dehumidifier = shared_mem.get('dehumidifier', False)
-
-        shared_mem['temperature'] = round(temperature_func(t_days, env, fan, heater, alpha), 2)
-        shared_mem['humidity'] = round(moisture_func(env.moisture, env.temperature, env.humidity, t_days, env, pump, alpha), 2)
-        shared_mem['moisture'] = round(humidity_func(env.temperature, env.moisture, t_days, env, humidifier, dehumidifier, alpha), 2)
+        shared_mem['temperature'] = round(env.temperature_func(t_days, fan, heater, alpha), 2)
+        shared_mem['humidity'] = round(env.humidity_func(t_days, humidifier, dehumidifier, alpha), 2)
+        shared_mem['moisture'] = round(env.moisture_func( t_days, pump, alpha), 2)
         shared_mem['time'] = datetime.now()
         ready_event.set()
         time.sleep(1)
@@ -320,34 +375,58 @@ def main():
     ready_event = mp.Event()
     try:
         log_queue = mp.Queue()
-        logger_proc = mp.Process(target=logger_loop, args=(log_queue,))
-        logger_proc.start()
-
-
+        stop_event = threading.Event()
+        log_thread = threading.Thread(target=logger_loop, args=(log_queue, stop_event))
+        log_thread.start()
         env_proc = mp.Process(target=environment_process,args=(shared_mem, ready_event),daemon=True)
         env_proc.start()
         print("Waiting for environment initialization...")
         ready_event.wait()  # Blocks until environment sets it
         print(f"Environment initialized")
-
         subscriber_proc = mp.Process(target=mqtt_to_mongodb_loop,args=(args.mongo_name, args.mongo_pass, args.mongo_cluster,log_queue, args.mqtt_host, args.mqtt_port,))
         subscriber_proc.start()
-
-        sensors:List[Sensor] = []
+        
+        sensors:List[Sensor]|None = []
+        actuators:List[Actuator]|None=[]
         # for i in range(3):
-        sensors.append(Sensor(f't{1}','temperature',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
-        sensors.append(Sensor(f'h{1}','humidity',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
-        sensors.append(Sensor(f'm{1}','moisture',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
+        sensors.append(Sensor(f'Sensor_t{1}','temperature',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
+        sensors.append(Sensor(f'Sensor_h{1}','humidity',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
+        sensors.append(Sensor(f'Sensor_m{1}','moisture',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
+        
+        actuators.append(Actuator(f'Actuator_t{1}','temperature',mode="heater",shared_mem=shared_mem,log_queue=log_queue))
+        actuators.append(Actuator(f'Actuator_h{1}','humidity',mode="humidifier",shared_mem=shared_mem,log_queue=log_queue))
+        actuators.append(Actuator(f'Actuator_m{1}','moisture',shared_mem=shared_mem,log_queue=log_queue))
         try:
-            asyncio.run(gateway_loop(sensors, log_queue, mqtt_host=args.mqtt_host, mqtt_port=args.mqtt_port,poll_interval=2))
+            asyncio.run(gateway_loop(sensors,actuators, log_queue, mqtt_host=args.mqtt_host, mqtt_port=args.mqtt_port,poll_interval=2))
         except Exception as e:
-            log_queue.put(f"Gateway loop error: {e}")
+            print(f"Gateway loop error: {e}")
+            print("Exiting...")
+            env_proc.terminate()
+            subscriber_proc.terminate()
+            env_proc.join()
+            subscriber_proc.join()
+            sensors.clear()
+            actuators.clear()
+            shared_mem.clear()
+            log_queue.empty()
+            log_queue.close()
+            del(sensors)
+            del(actuators)
     except KeyboardInterrupt:
         env_proc.terminate()
         subscriber_proc.terminate()
-        logger_proc.terminate()
-
+        env_proc.join()
+        subscriber_proc.join()
+        stop_event.set()
+        sensors.clear()
+        actuators.clear()
+        shared_mem.clear()
+        log_queue.empty()
+        log_queue.close()
+        del(sensors)
+        del(actuators)
         print("Exiting...")
+
 
 if __name__ == "__main__":
    main()
