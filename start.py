@@ -5,7 +5,7 @@ import time
 from datetime import datetime
 import multiprocessing as mp
 import queue  # for Empty exception
-from multiprocessing import Manager,queues
+from multiprocessing import Manager
 from typing import List
 import asyncio
 import paho.mqtt.client as mqtt
@@ -18,9 +18,7 @@ from urllib.parse import quote_plus
 import json
 
 import csv
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
-from pathlib import Path
+import os
 import threading
 
 
@@ -60,7 +58,8 @@ class Sensor:
         self.locTempNoise = random.uniform(-1,1)
         #locational noise for each sensor
     async def getValue(self):
-        return {"value":round(self.shared_mem[self.sensor_type]+self.locTempNoise,2),"time":self.shared_mem['time'].isoformat()}
+        return {"value":round(self.shared_mem[self.sensor_type]+self.locTempNoise,2),
+                "time":self.shared_mem['time'].isoformat()}
     
     def __str__(self):
         return f"""Sensor - {self.sensor_id}:
@@ -70,13 +69,12 @@ class Sensor:
         'locationalNoise':'{self.locTempNoise}'\n"""
 
 class Actuator:
-    def __init__(self,id:str,type:str,shared_mem,log_queue,is_on=False,mode:str|None=None):
+    def __init__(self,id:str,type:str,shared_mem,is_on=False,mode:str|None=None):
         if type not in VALID_TYPES:
             raise ValueError(f"Invalid actuator type: {type}\n Valid types: {VALID_TYPES}")
         self.id=id
         self.type=type
         self.shared_mem=shared_mem
-        self.log_queue=log_queue
         self.is_on=is_on
         self.device = self._assign_device(mode)
         if self.device not in shared_mem:
@@ -113,16 +111,11 @@ class Actuator:
     def toggleActuator(self):
         new_state = not self.is_on
         try:
-            self.log_queue.put_nowait(
-                f"{self.id} ({self.type}:{self.device}) toggled {'ON' if new_state else 'OFF'}"
-            )
-            self.log_queue.put_nowait(
-                f"Device '{self.device}' is now {'running' if new_state else 'stopped'}"
-            )
+            self.is_on = new_state
+            self.shared_mem[self.device] = new_state
+            return (f"{self.id} ({self.type}:{self.device}) toggled {'ON' if new_state else 'OFF'}\nDevice '{self.device}' is now {'running' if new_state else 'stopped'}")
         except Exception:
-            print(f"[LOG-FAIL] {self.id} toggled {'ON' if new_state else 'OFF'}")
-        self.is_on = new_state
-        self.shared_mem[self.device] = new_state
+            return f"[LOG-FAIL] {self.id} toggled {'ON' if new_state else 'OFF'}"
 
 
 
@@ -146,22 +139,23 @@ async def gateway_loop(sensors: List[Sensor],actuators:List[Actuator], log_queue
             readings = await asyncio.gather(*tasks)
             for sensor, reading in zip(sensors, readings):
                 topic = f"sensors/{sensor.sensor_type}/{sensor.sensor_id}"
+                type=sensor.sensor_type
                 temp_val=reading.get('value')
                 payload = json.dumps({
                     "value": reading.get("value"),
                     "time": reading.get("time")
                 })
                 try:
+                    client.publish(topic, payload, qos=1, retain=True)
+                    log_queue.put_nowait(f"Published {payload} to {topic}")
                     specificActuator:Actuator=next(a for a in actuators if a.device=="heater")
                     if temp_val:
                         if specificActuator.is_on==False and temp_val<15:
-                            specificActuator.toggleActuator()
-                        elif specificActuator.is_on==True and temp_val>20:
-                            specificActuator.toggleActuator()
+                            log_queue.put_nowait(specificActuator.toggleActuator())
+                        elif type=="temperature" and temp_val>20:
+                            log_queue.put_nowait(specificActuator.toggleActuator())
                         else:
                             pass
-                    client.publish(topic, payload, qos=1, retain=True)
-                    log_queue.put_nowait(f"Published {payload} to {topic}")
                 except Exception as e:
                     log_queue.put_nowait(f"MQTT publish error for {sensor.sensor_id}: {e}")
             await asyncio.sleep(poll_interval)
@@ -199,7 +193,7 @@ class EnvironmentState:
         seasonal = A_seasonal * np.sin(2 * np.pi * (t_days / 365 - 0.25))
 
         # Daily amplitude: larger at equator, smaller at poles
-        A_daily = 8 - 6 * lat_norm  # equator 8°C, poles 2°C
+        A_daily = 8 - 6 * lat_norm  
         frac = t_days % 1
         daily = A_daily * np.sin(2 * np.pi * frac - np.pi/2)
 
@@ -302,39 +296,55 @@ def environment_process(shared_mem, ready_event, time_acceleration:float|None=No
         shared_mem['time'] = datetime.now()
         ready_event.set()
         time.sleep(1)
+
 def mqtt_to_mongodb_loop(mongo_name, mongo_pass, mongo_cluster, log_queue,
                          mqtt_host="192.168.0.38", mqtt_port=8883):
     subscribed = False  # outside on_connect
 
+
+
+
     def on_connect(client, userdata, flags, rc):
         nonlocal subscribed
         if rc == 0:
-            log_queue.put("MQTT connected (rc=0).")
+            log_queue.put_nowait("MQTT connected (rc=0).")
             if not subscribed:
                 client.subscribe("sensors/#", qos=1)
                 subscribed = True
         else:
-            log_queue.put(f"MQTT connection error: rc={rc}")
+            log_queue.put_nowait(f"MQTT connection error: rc={rc}")
 
     def on_message(client, userdata, msg):
         try:
             data = json.loads(msg.payload.decode("utf-8"))
             topic_parts = msg.topic.split('/')
             if len(topic_parts) < 3:
-                log_queue.put(f"Invalid topic format: {msg.topic}")
+                log_queue.put_nowait(f"Invalid topic format: {msg.topic}")
                 return
             sensor_type = topic_parts[1]
             sensor_id = topic_parts[2]
+            os.makedirs('data', exist_ok=True)
+            filename = os.path.join("data", f"{sensor_type}.csv")
+            file_exists = os.path.isfile(filename)
+            try:
+                with open(filename, "a", newline="") as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        writer.writerow([float(data["value"]), data["time"]])
+                    writer.writerow([float(data["value"]), data["time"]])
+            except Exception as e:
+                log_queue.put_nowait(f"Error in file writing")
+
             result=db[sensor_type].insert_one({
                 "sensor_id": sensor_id,
                 "sensor_type": sensor_type,
                 "value": float(data["value"]),
                 "timestamp": data["time"]
             })
-            log_queue.put(f"Inserted into MongoDB ({sensor_type}): {result}")
+            log_queue.put_nowait(f"Inserted into MongoDB ({sensor_type}): {result}")
 
         except Exception as e:
-            log_queue.put(f"Error processing MQTT message: {e}")
+            log_queue.put_nowait(f"Error processing MQTT message: {e}")
 
     # Create single persistent MQTT client
     try:
@@ -342,9 +352,9 @@ def mqtt_to_mongodb_loop(mongo_name, mongo_pass, mongo_cluster, log_queue,
         password = quote_plus(mongo_pass)
         cluster = quote_plus(mongo_cluster)
         uri = f"mongodb+srv://{username}:{password}@{cluster}/?retryWrites=true&w=majority&appName=SensorSimulator"
-        log_queue.put("MongoDB connected successfully.")
+        log_queue.put_nowait("MongoDB connected successfully.")
     except Exception as e:
-        log_queue.put(f"MongoDB connection error: {e}")
+        log_queue.put_nowait(f"MongoDB connection error: {e}")
         return
     mongo_client = MongoClient(uri, server_api=ServerApi("1"))
     db = mongo_client["sensor_data"]
@@ -354,9 +364,9 @@ def mqtt_to_mongodb_loop(mongo_name, mongo_pass, mongo_cluster, log_queue,
 
     try:
         client.connect(mqtt_host, mqtt_port)
-        log_queue.put("MQTT subscriber connected, entering loop_forever()")
+        log_queue.put_nowait("MQTT subscriber connected, entering loop_forever()")
     except Exception as e:
-        log_queue.put(f"MQTT initial connection error: {e}")
+        log_queue.put_nowait(f"MQTT initial connection error: {e}")
         return
 
     client.loop_forever()
@@ -373,13 +383,13 @@ def main():
     manager = Manager()
     shared_mem = manager.dict()
     ready_event = mp.Event()
+    log_queue = mp.Queue()
+    stop_event = threading.Event()
     try:
-        log_queue = mp.Queue()
-        stop_event = threading.Event()
-        log_thread = threading.Thread(target=logger_loop, args=(log_queue, stop_event))
-        log_thread.start()
-        env_proc = mp.Process(target=environment_process,args=(shared_mem, ready_event),daemon=True)
-        env_proc.start()
+        logging_thread = threading.Thread(target=logger_loop, args=(log_queue, stop_event))
+        logging_thread.start()
+        enviroment_process = mp.Process(target=environment_process,args=(shared_mem, ready_event),daemon=True)
+        enviroment_process.start()
         print("Waiting for environment initialization...")
         ready_event.wait()  # Blocks until environment sets it
         print(f"Environment initialized")
@@ -393,18 +403,18 @@ def main():
         sensors.append(Sensor(f'Sensor_h{1}','humidity',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
         sensors.append(Sensor(f'Sensor_m{1}','moisture',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
         
-        actuators.append(Actuator(f'Actuator_t{1}','temperature',mode="heater",shared_mem=shared_mem,log_queue=log_queue))
-        actuators.append(Actuator(f'Actuator_h{1}','humidity',mode="humidifier",shared_mem=shared_mem,log_queue=log_queue))
-        actuators.append(Actuator(f'Actuator_m{1}','moisture',shared_mem=shared_mem,log_queue=log_queue))
+        actuators.append(Actuator(f'Actuator_t{1}','temperature',mode="heater",shared_mem=shared_mem))
+        actuators.append(Actuator(f'Actuator_h{1}','humidity',mode="humidifier",shared_mem=shared_mem))
+        actuators.append(Actuator(f'Actuator_m{1}','moisture',shared_mem=shared_mem))
         try:
             asyncio.run(gateway_loop(sensors,actuators, log_queue, mqtt_host=args.mqtt_host, mqtt_port=args.mqtt_port,poll_interval=2))
         except Exception as e:
             print(f"Gateway loop error: {e}")
             print("Exiting...")
-            env_proc.terminate()
             subscriber_proc.terminate()
-            env_proc.join()
+            enviroment_process.terminate()
             subscriber_proc.join()
+            enviroment_process.join()
             sensors.clear()
             actuators.clear()
             shared_mem.clear()
@@ -413,10 +423,10 @@ def main():
             del(sensors)
             del(actuators)
     except KeyboardInterrupt:
-        env_proc.terminate()
         subscriber_proc.terminate()
-        env_proc.join()
+        enviroment_process.terminate()
         subscriber_proc.join()
+        enviroment_process.join()
         stop_event.set()
         sensors.clear()
         actuators.clear()
