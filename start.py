@@ -39,128 +39,128 @@ def logger_loop(log_queue, stop_event):
         except OSError:
             break
 
-VALID_TYPES = ("temperature", "humidity", "moisture")
-class Sensor:
-    def __init__(self, sensor_id:str,sensor_type:str,shared_mem,location:Location|float|None=None):
-        if sensor_type not in VALID_TYPES:
-            raise ValueError(f"Invalid sensor_type: {sensor_type}\n Valid types: {VALID_TYPES}")
-        self.sensor_id = sensor_id
-        self.sensor_type= sensor_type
-        self.shared_mem= shared_mem
-        lat=math.degrees(math.asin(0.0))
-        if isinstance(location, Location):
-            lat = location.latitude
-        elif isinstance(location, float):
-            lat = location
-        else:
-            lat = 45.0
-        self.latitude = lat
-        self.locTempNoise = random.uniform(-1,1)
-        #locational noise for each sensor
-    async def getValue(self):
-        return {"value":round(self.shared_mem[self.sensor_type]+self.locTempNoise,2),
-                "time":self.shared_mem['time'].isoformat()}
+# VALID_TYPES = ("temperature", "humidity", "moisture")
+# class Sensor:
+#     def __init__(self, sensor_id:str,sensor_type:str,shared_mem,location:Location|float|None=None):
+#         if sensor_type not in VALID_TYPES:
+#             raise ValueError(f"Invalid sensor_type: {sensor_type}\n Valid types: {VALID_TYPES}")
+#         self.sensor_id = sensor_id
+#         self.sensor_type= sensor_type
+#         self.shared_mem= shared_mem
+#         lat=math.degrees(math.asin(0.0))
+#         if isinstance(location, Location):
+#             lat = location.latitude
+#         elif isinstance(location, float):
+#             lat = location
+#         else:
+#             lat = 45.0
+#         self.latitude = lat
+#         self.locTempNoise = random.uniform(-1,1)
+#         #locational noise for each sensor
+#     async def getValue(self):
+#         return {"value":round(self.shared_mem[self.sensor_type]+self.locTempNoise,2),
+#                 "time":self.shared_mem['time'].isoformat()}
     
-    def __str__(self):
-        return f"""Sensor - {self.sensor_id}:
-        'sensor_id':'{self.sensor_id}'
-        'sensor_type':'{self.sensor_type}'
-        'latitude':'{self.latitude}'
-        'locationalNoise':'{self.locTempNoise}'\n"""
+#     def __str__(self):
+#         return f"""Sensor - {self.sensor_id}:
+#         'sensor_id':'{self.sensor_id}'
+#         'sensor_type':'{self.sensor_type}'
+#         'latitude':'{self.latitude}'
+#         'locationalNoise':'{self.locTempNoise}'\n"""
 
-class Actuator:
-    def __init__(self,id:str,type:str,shared_mem,is_on=False,mode:str|None=None):
-        if type not in VALID_TYPES:
-            raise ValueError(f"Invalid actuator type: {type}\n Valid types: {VALID_TYPES}")
-        self.id=id
-        self.type=type
-        self.shared_mem=shared_mem
-        self.is_on=is_on
-        self.device = self._assign_device(mode)
-        if self.device not in shared_mem:
-            shared_mem[self.device] = False
-    def _assign_device(self, mode):
-        """Assign correct device based on actuator type and mode."""
+# class Actuator:
+#     def __init__(self,id:str,type:str,shared_mem,is_on=False,mode:str|None=None):
+#         if type not in VALID_TYPES:
+#             raise ValueError(f"Invalid actuator type: {type}\n Valid types: {VALID_TYPES}")
+#         self.id=id
+#         self.type=type
+#         self.shared_mem=shared_mem
+#         self.is_on=is_on
+#         self.device = self._assign_device(mode)
+#         if self.device not in shared_mem:
+#             shared_mem[self.device] = False
+#     def _assign_device(self, mode):
+#         """Assign correct device based on actuator type and mode."""
 
-        device_map = {
-            "temperature": ["heater", "fan"],
-            "moisture": ["pump"],
-            "humidity": ["humidifier", "dehumidifier"]
-        }
+#         device_map = {
+#             "temperature": ["heater", "fan"],
+#             "moisture": ["pump"],
+#             "humidity": ["humidifier", "dehumidifier"]
+#         }
 
-        valid_devices = device_map[self.type]
+#         valid_devices = device_map[self.type]
 
-        # If only one device exists, return it
-        if len(valid_devices) == 1:
-            return valid_devices[0]
+#         # If only one device exists, return it
+#         if len(valid_devices) == 1:
+#             return valid_devices[0]
 
-        # If multiple devices exist (temperature or humidity):
-        if mode is None:
-            raise ValueError(
-                f"Actuator type '{self.type}' requires a mode: {valid_devices}"
-            )
+#         # If multiple devices exist (temperature or humidity):
+#         if mode is None:
+#             raise ValueError(
+#                 f"Actuator type '{self.type}' requires a mode: {valid_devices}"
+#             )
 
-        if mode not in valid_devices:
-            raise ValueError(
-                f"Invalid mode '{mode}' for type '{self.type}'. "
-                f"Choose one of: {valid_devices}"
-            )
+#         if mode not in valid_devices:
+#             raise ValueError(
+#                 f"Invalid mode '{mode}' for type '{self.type}'. "
+#                 f"Choose one of: {valid_devices}"
+#             )
 
-        return mode
+#         return mode
     
-    def toggleActuator(self):
-        new_state = not self.is_on
-        try:
-            self.is_on = new_state
-            self.shared_mem[self.device] = new_state
-            return (f"{self.id} ({self.type}:{self.device}) toggled {'ON' if new_state else 'OFF'}\nDevice '{self.device}' is now {'running' if new_state else 'stopped'}")
-        except Exception:
-            return f"[LOG-FAIL] {self.id} toggled {'ON' if new_state else 'OFF'}"
+#     def toggleActuator(self):
+#         new_state = not self.is_on
+#         try:
+#             self.is_on = new_state
+#             self.shared_mem[self.device] = new_state
+#             return (f"{self.id} ({self.type}:{self.device}) toggled {'ON' if new_state else 'OFF'}\nDevice '{self.device}' is now {'running' if new_state else 'stopped'}")
+#         except Exception:
+#             return f"[LOG-FAIL] {self.id} toggled {'ON' if new_state else 'OFF'}"
 
 
 
-async def gateway_loop(sensors: List[Sensor],actuators:List[Actuator], log_queue:mp.Queue, poll_interval=2, mqtt_host="192.168.0.38", mqtt_port=8883):
-    client = mqtt.Client(client_id="gateway-publisher", clean_session=False)
-    try:
-        client.connect(mqtt_host, mqtt_port)
-        client.loop_start()
-        log_queue.put_nowait(f"MQTT connected to {mqtt_host}:{mqtt_port}")
-    except Exception as e:
-        log_queue.put_nowait(f"MQTT connection failed: {e}")
-        return
-    while True:
-        count=0
-        for sensor in sensors:
-            count +=1
-        if count<1:
-            raise Exception("No sensors present")
-        try:
-            tasks = [sensor.getValue() for sensor in sensors]
-            readings = await asyncio.gather(*tasks)
-            for sensor, reading in zip(sensors, readings):
-                topic = f"sensors/{sensor.sensor_type}/{sensor.sensor_id}"
-                type=sensor.sensor_type
-                temp_val=reading.get('value')
-                payload = json.dumps({
-                    "value": reading.get("value"),
-                    "time": reading.get("time")
-                })
-                try:
-                    client.publish(topic, payload, qos=1, retain=True)
-                    log_queue.put_nowait(f"Published {payload} to {topic}")
-                    specificActuator:Actuator=next(a for a in actuators if a.device=="heater")
-                    if temp_val:
-                        if specificActuator.is_on==False and temp_val<15:
-                            log_queue.put_nowait(specificActuator.toggleActuator())
-                        elif type=="temperature" and temp_val>20:
-                            log_queue.put_nowait(specificActuator.toggleActuator())
-                        else:
-                            pass
-                except Exception as e:
-                    log_queue.put_nowait(f"MQTT publish error for {sensor.sensor_id}: {e}")
-            await asyncio.sleep(poll_interval)
-        except Exception as e:
-            log_queue.put_nowait(f"Gateway loop error: {e}")
+# async def gateway_loop(sensors: List[Sensor],actuators:List[Actuator], log_queue:mp.Queue, poll_interval=2, mqtt_host="192.168.0.38", mqtt_port=8883):
+#     client = mqtt.Client(client_id="gateway-publisher", clean_session=False)
+#     try:
+#         client.connect(mqtt_host, mqtt_port)
+#         client.loop_start()
+#         log_queue.put_nowait(f"MQTT connected to {mqtt_host}:{mqtt_port}")
+#     except Exception as e:
+#         log_queue.put_nowait(f"MQTT connection failed: {e}")
+#         return
+#     while True:
+#         count=0
+#         for sensor in sensors:
+#             count +=1
+#         if count<1:
+#             raise Exception("No sensors present")
+#         try:
+#             tasks = [sensor.getValue() for sensor in sensors]
+#             readings = await asyncio.gather(*tasks)
+#             for sensor, reading in zip(sensors, readings):
+#                 topic = f"sensors/{sensor.sensor_type}/{sensor.sensor_id}"
+#                 type=sensor.sensor_type
+#                 temp_val=reading.get('value')
+#                 payload = json.dumps({
+#                     "value": reading.get("value"),
+#                     "time": reading.get("time")
+#                 })
+#                 try:
+#                     client.publish(topic, payload, qos=1, retain=True)
+#                     log_queue.put_nowait(f"Published {payload} to {topic}")
+#                     specificActuator:Actuator=next(a for a in actuators if a.device=="heater")
+#                     if temp_val:
+#                         if specificActuator.is_on==False and temp_val<15:
+#                             log_queue.put_nowait(specificActuator.toggleActuator())
+#                         elif type=="temperature" and temp_val>20:
+#                             log_queue.put_nowait(specificActuator.toggleActuator())
+#                         else:
+#                             pass
+#                 except Exception as e:
+#                     log_queue.put_nowait(f"MQTT publish error for {sensor.sensor_id}: {e}")
+#             await asyncio.sleep(poll_interval)
+#         except Exception as e:
+#             log_queue.put_nowait(f"Gateway loop error: {e}")
 
 class EnvironmentState:
     """Tracks environment variables and gradual control tilts"""
@@ -385,57 +385,57 @@ def main():
     ready_event = mp.Event()
     log_queue = mp.Queue()
     stop_event = threading.Event()
-    try:
-        logging_thread = threading.Thread(target=logger_loop, args=(log_queue, stop_event))
-        logging_thread.start()
-        enviroment_process = mp.Process(target=environment_process,args=(shared_mem, ready_event),daemon=True)
-        enviroment_process.start()
-        print("Waiting for environment initialization...")
-        ready_event.wait()  # Blocks until environment sets it
-        print(f"Environment initialized")
-        subscriber_proc = mp.Process(target=mqtt_to_mongodb_loop,args=(args.mongo_name, args.mongo_pass, args.mongo_cluster,log_queue, args.mqtt_host, args.mqtt_port,))
-        subscriber_proc.start()
+    # try:
+    logging_thread = threading.Thread(target=logger_loop, args=(log_queue, stop_event))
+    logging_thread.start()
+    enviroment_process = mp.Process(target=environment_process,args=(shared_mem, ready_event),daemon=True)
+    enviroment_process.start()
+    print("Waiting for environment initialization...")
+    ready_event.wait()  # Blocks until environment sets it
+    print(f"Environment initialized")
+    subscriber_proc = mp.Process(target=mqtt_to_mongodb_loop,args=(args.mongo_name, args.mongo_pass, args.mongo_cluster,log_queue, args.mqtt_host, args.mqtt_port,))
+    subscriber_proc.start()
         
-        sensors:List[Sensor]|None = []
-        actuators:List[Actuator]|None=[]
-        # for i in range(3):
-        sensors.append(Sensor(f'Sensor_t{1}','temperature',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
-        sensors.append(Sensor(f'Sensor_h{1}','humidity',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
-        sensors.append(Sensor(f'Sensor_m{1}','moisture',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
+        # sensors:List[Sensor]|None = []
+        # actuators:List[Actuator]|None=[]
+        # # for i in range(3):
+        # sensors.append(Sensor(f'Sensor_t{1}','temperature',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
+        # sensors.append(Sensor(f'Sensor_h{1}','humidity',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
+        # sensors.append(Sensor(f'Sensor_m{1}','moisture',shared_mem=shared_mem,location=math.degrees(math.asin(0.0))))
         
-        actuators.append(Actuator(f'Actuator_t{1}','temperature',mode="heater",shared_mem=shared_mem))
-        actuators.append(Actuator(f'Actuator_h{1}','humidity',mode="humidifier",shared_mem=shared_mem))
-        actuators.append(Actuator(f'Actuator_m{1}','moisture',shared_mem=shared_mem))
-        try:
-            asyncio.run(gateway_loop(sensors,actuators, log_queue, mqtt_host=args.mqtt_host, mqtt_port=args.mqtt_port,poll_interval=2))
-        except Exception as e:
-            print(f"Gateway loop error: {e}")
-            print("Exiting...")
-            subscriber_proc.terminate()
-            enviroment_process.terminate()
-            subscriber_proc.join()
-            enviroment_process.join()
-            sensors.clear()
-            actuators.clear()
-            shared_mem.clear()
-            log_queue.empty()
-            log_queue.close()
-            del(sensors)
-            del(actuators)
-    except KeyboardInterrupt:
-        subscriber_proc.terminate()
-        enviroment_process.terminate()
-        subscriber_proc.join()
-        enviroment_process.join()
-        stop_event.set()
-        sensors.clear()
-        actuators.clear()
-        shared_mem.clear()
-        log_queue.empty()
-        log_queue.close()
-        del(sensors)
-        del(actuators)
-        print("Exiting...")
+        # actuators.append(Actuator(f'Actuator_t{1}','temperature',mode="heater",shared_mem=shared_mem))
+        # actuators.append(Actuator(f'Actuator_h{1}','humidity',mode="humidifier",shared_mem=shared_mem))
+        # actuators.append(Actuator(f'Actuator_m{1}','moisture',shared_mem=shared_mem))
+        # try:
+        #     asyncio.run(gateway_loop(sensors,actuators, log_queue, mqtt_host=args.mqtt_host, mqtt_port=args.mqtt_port,poll_interval=2))
+    #     except Exception as e:
+    #         print(f"Gateway loop error: {e}")
+    #         print("Exiting...")
+    #         subscriber_proc.terminate()
+    #         enviroment_process.terminate()
+    #         subscriber_proc.join()
+    #         enviroment_process.join()
+    #         sensors.clear()
+    #         actuators.clear()
+    #         shared_mem.clear()
+    #         log_queue.empty()
+    #         log_queue.close()
+    #         del(sensors)
+    #         del(actuators)
+    # except KeyboardInterrupt:
+    #     subscriber_proc.terminate()
+    #     enviroment_process.terminate()
+    #     subscriber_proc.join()
+    #     enviroment_process.join()
+    #     stop_event.set()
+    #     sensors.clear()
+    #     actuators.clear()
+    #     shared_mem.clear()
+    #     log_queue.empty()
+    #     log_queue.close()
+    #     del(sensors)
+    #     del(actuators)
+    #     print("Exiting...")
 
 
 if __name__ == "__main__":
