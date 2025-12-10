@@ -1,99 +1,112 @@
+from collections import deque
 from fastapi import FastAPI
 from typing import List
 from pydantic import BaseModel
 import datetime
-import asyncio
 import uvicorn
+import paho.mqtt.client as mqtt
 import json
+import asyncio
 from contextlib import asynccontextmanager
+
+MQTT_BROKER = "127.0.0.1"
+MQTT_PORT = 1883
+
+# Buffers per sensor type, storing last 100 readings
+temperature_data = deque(maxlen=100)
+humidity_data = deque(maxlen=100)
+moisture_data = deque(maxlen=100)
+
+# Async queue for thread-safe MQTT processing
+data_queue: asyncio.Queue = asyncio.Queue()
+
+class Reading(BaseModel):
+    sensor_id: str
+    sensor_type: str  # 'temperature', 'humidity', 'moisture'
+    value: float
+    time: datetime.datetime
+
+
+async def queue_consumer():
+    """Consume readings from the async queue and push into the correct buffer."""
+    while True:
+        reading: Reading = await data_queue.get()
+        if reading.sensor_type == "temperature":
+            temperature_data.append(reading)
+        elif reading.sensor_type == "humidity":
+            humidity_data.append(reading)
+        elif reading.sensor_type == "moisture":
+            moisture_data.append(reading)
+        await asyncio.sleep(0)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    tcp_task = asyncio.create_task(run_tcp_server())
-    print("TCP server task started")
-    yield
-    tcp_task.cancel()
-    print("TCP server task stopped")
-
+    """Startup and shutdown logic using async context manager."""
+    loop = asyncio.get_running_loop()
+    consumer_task = asyncio.create_task(queue_consumer())
+    mqtt_task = asyncio.create_task(run_mqtt_client(loop))
+    try:
+        yield
+    finally:
+        mqtt_task.cancel()
+        consumer_task.cancel()
+        await asyncio.sleep(0)
+        print("App shutting down...")
 
 app = FastAPI(lifespan=lifespan)
 
-class Reading(BaseModel):
-    sensor_id:int
-    sensor_type:str
-    value:str
-    time:datetime.datetime
+@app.get("/sensors/{sensor_type}")
+async def get_sensor_type_data(sensor_type: str, sensor_id: str|None = None):
+
+    buffer_map = {
+        "temperature": temperature_data,
+        "humidity": humidity_data,
+        "moisture": moisture_data
+    }
+    buffer = buffer_map.get(sensor_type.lower())
+    if buffer is None:
+        return {"error": "Invalid sensor type"}
     
-sensor_data:List[Reading] = []
-
-
-
-sensor_data = []  # shared memory between TCP + HTTP
-
-
-async def handle_tcp(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-    addr = writer.get_extra_info("peername")
-    print(f"Client connected: {addr}")
-
-    try:
-        while True:
-            line = await reader.readline()
-            if not line:
-                break 
-            try:
-                data = json.loads(line.decode().strip())
-                reading:Reading = Reading(**data)
-                sensor_data.append(reading)
-                print("Received:", data)
-            except Exception as e:
-                print("Error parsing:", e)
-
-    finally:
-        writer.close()
-        await writer.wait_closed()
-        print(f"Client disconnected: {addr}")
-
-@app.get("/")
-async def get_data():
-    return sensor_data[-50:]  # last 50 readings
+    if sensor_id!=None:
+        return [r for r in buffer if r.sensor_id == sensor_id]
+    return list(buffer)
 
 @app.post("/add")
-async def add_data(item: Reading|List[Reading]):
-    if isinstance(item,Reading):
-        sensor_data.append(item)
-    else:
-        for obj in item:
-            sensor_data.append(obj)
+async def add_data(item: Reading | List[Reading]):
+    """Add a new reading or list of readings manually (for HTTP clients)."""
+    items = item if isinstance(item, list) else [item]
+    for r in items:
+        await data_queue.put(r)
     return {"status": "ok"}
 
+async def run_mqtt_client(loop):
+    """Connect to MQTT broker and push messages into async queue."""
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            print("Connected to MQTT broker!")
+            client.subscribe("sensors/#")
+        else:
+            print(f"Failed to connect, return code {rc}")
 
-@app.get("/readings/{sensor_type}/{sensor_id}")
-def read_item(sensor_type:str,sensor_id:int):
-    results:List[Reading]=[]
-    for reading in sensor_data:
-        if reading.sensor_type==sensor_type and reading.sensor_id==sensor_id:
-            results.append(reading)
-    return results
+    def on_message(client, userdata, msg):
+        try:
+            data = json.loads(msg.payload.decode())
+            reading = Reading(**data)
+            asyncio.run_coroutine_threadsafe(data_queue.put(reading), loop)
+        except Exception as e:
+            print(f"Error parsing MQTT message: {e}")
 
-
-async def run_tcp_server(host="127.0.0.1", port=5004):
-    server = await asyncio.start_server(handle_tcp, host, port)
-    print(f"TCP server listening on {host}:{port}")
-
-    async with server:
-        await server.serve_forever()
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(MQTT_BROKER, MQTT_PORT, 60)
+    await loop.run_in_executor(None, client.loop_forever)
 
 def start_fastapi(host="127.0.0.1", port=8000):
-    uvicorn.run(
-        "main:app",           # module:app
-        host=host,
-        port=port,
-        reload=False,         # optional
-        workers=1,            # must be 1 for asyncio tasks
-        log_level="info"
-    )
+    uvicorn.run("gateway:app", host=host, port=port, reload=False, workers=1, log_level="info")
 
+def main():
+    start_fastapi(host="127.0.0.1",port=8000)
 
 if __name__ == "__main__":
-    start_fastapi(port=8080)   # choose your arguments here
-
-    
+    main()

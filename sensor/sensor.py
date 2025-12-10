@@ -2,6 +2,8 @@
 import math,random,asyncio,json
 from multiprocessing.synchronize import Event
 from typing import List
+import requests
+import paho.mqtt.client as mqtt
 
 VALID_TYPES = ("temperature", "humidity", "moisture")
 class Location:
@@ -24,34 +26,53 @@ class Sensor:
         self.locTempNoise = random.uniform(-1,1)
         #locational noise for each sensor
     async def getValue(self):
-        messageObject={"sensor_id":self.sensor_id,"sensor_type":self.sensor_type,"value":self.enviroment_memory[self.sensor_type],"time":self.enviroment_memory['time']}
-
-        serializedMessage = (json.dumps(messageObject) + "\n").encode("utf-8")
-        return serializedMessage
+        return {
+            "sensor_id": self.sensor_id,
+            "sensor_type": self.sensor_type,
+            "value": self.enviroment_memory[self.sensor_type],
+            "time": self.enviroment_memory['time']
+        }
 
     def __str__(self):
         return f"""Sensor - {self.sensor_id}:
         'sensor_id':'{self.sensor_id}'
-        'sensor_type':'{self.sensor_type}'
-        'latitude':'{self.latitude}'
-        'locationalNoise':'{self.locTempNoise}'\n"""
+        'sensor_type':'{self.sensor_type}'\n"""
 
 
-def sensor_process(stop_event: Event, sensor_id, sensor_type, enviroment_memory, host="127.0.0.1", port=5004):
-    sensor=Sensor(sensor_id=sensor_id,sensor_type=sensor_type,enviroment_memory=enviroment_memory)
+def sensor_process( sensor_id, sensor_type, enviroment_memory,ready_event:Event,stop_event: Event, host="127.0.0.1", port=5004):
+    sensor = Sensor(sensor_id=sensor_id, sensor_type=sensor_type, enviroment_memory=enviroment_memory)
+    client = mqtt.Client()
+
+    def on_connect(client, userdata, flags, rc):
+        if rc == 0:
+            print(f"Sensor {sensor_id} connected to MQTT broker!")
+            ready_event.set()
+        else:
+            print(f"Sensor {sensor_id} failed to connect, rc={rc}")
+    client.on_connect = on_connect
+    client.connect(host, port, 60)
+
     async def async_worker():
-        _, writer = await asyncio.open_connection(host, port)
+        client.loop_start()  # run MQTT network loop in background thread
         try:
             while not stop_event.is_set():
-                reading= await sensor.getValue()
-                writer.write(reading)
-                await writer.drain()
-                await asyncio.sleep(1)
+                reading = sensor.getValue()
+                topic = f"sensors/{sensor.sensor_type}/{sensor.sensor_id}"
+                
+                res=client.publish(topic, json.dumps(reading),qos=1)
+                if res.is_published():
+                    print(f"Sensor {sensor_id} published: {reading}")
+                await asyncio.sleep(1)  # publish interval
+        except asyncio.CancelledError:
+            print(f"Sensor {sensor_id} async worker cancelled")
         finally:
-            writer.close()
-            await writer.wait_closed()
-        asyncio.run(async_worker())
-        
+            client.loop_stop()
+            client.disconnect()
+            print(f"Sensor {sensor_id} disconnected from MQTT broker")
 
+    try:
+        asyncio.run(async_worker())
+    except KeyboardInterrupt:
+        print(f"Sensor {sensor_id} process interrupted")
 
 

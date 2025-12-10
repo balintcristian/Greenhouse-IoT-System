@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from multiprocessing import Manager
 import multiprocessing as mp
+from multiprocessing.synchronize import Event
 
 class EnvironmentState:
     """Tracks environment variables and gradual control tilts"""
@@ -14,7 +15,7 @@ class EnvironmentState:
         self.temperature = random.uniform(15, 20)
         self.humidity = 70.0
         self.moisture = random.uniform(300, 600)
-        self.time = datetime.now()
+        self.time = datetime.now().isoformat()
         self.start_time = time.time()
         self.start_day=90
         # Gradual control tilts
@@ -114,30 +115,35 @@ class EnvironmentState:
         self.moisture=float(np.clip(moisture, 0, 1000))
         return float(np.clip(moisture, 0, 1000))
     
-def environment_process(enviroment_memory, ready_event, stop_event, time_acceleration:float|None=None):
+def enviroment_process(enviroment_memory, ready_event:Event, stop_event:Event, time_acceleration:float|None=None):
     """
     Environment simulation loop.
     time_acceleration: number of simulated seconds per real second (time_acceleration 24 => 1 real hour = 1 simulated day)
     """
-    time_acceleration =time_acceleration if time_acceleration else (365 * 24 * 3600) / (0.5 * 3600)
-
     env = EnvironmentState(latitude=45.0)
+    ready_event.set()
+    time_acceleration =time_acceleration if time_acceleration else (365 * 24 * 3600) / (0.5 * 3600)
+    try:
+        alpha = 0.01  # tilt smoothing factor 
+        first=True
+        while not stop_event.is_set():
+            t_sim = (time.time() - env.start_time) * time_acceleration
+            t_days = env.start_day + (t_sim / (24*60*60))
+            # Read controls
+            fan = enviroment_memory.get('fan', False)
+            heater = enviroment_memory.get('heater', False)
+            pump = enviroment_memory.get('pump', False)
+            humidifier = enviroment_memory.get('humidifier', False)
+            dehumidifier = enviroment_memory.get('dehumidifier', False)
+            enviroment_memory['temperature'] = round(env.temperature_func(t_days, fan, heater, alpha), 2)
+            enviroment_memory['humidity'] = round(env.humidity_func(t_days, humidifier, dehumidifier, alpha), 2)
+            enviroment_memory['moisture'] = round(env.moisture_func( t_days, pump, alpha), 2)
+            enviroment_memory['time'] = datetime.now().isoformat()
+            if first:
+                ready_event.set()
+                first=False
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Environment process interrupted")
     
-    alpha = 0.01  # tilt smoothing factor
     
-    while not stop_event:
-        # Accelerated simulation time
-        t_sim = (time.time() - env.start_time) * time_acceleration
-        t_days = env.start_day + (t_sim / (24*60*60))
-        # Read controls
-        fan = enviroment_memory.get('fan', False)
-        heater = enviroment_memory.get('heater', False)
-        pump = enviroment_memory.get('pump', False)
-        humidifier = enviroment_memory.get('humidifier', False)
-        dehumidifier = enviroment_memory.get('dehumidifier', False)
-        enviroment_memory['temperature'] = round(env.temperature_func(t_days, fan, heater, alpha), 2)
-        enviroment_memory['humidity'] = round(env.humidity_func(t_days, humidifier, dehumidifier, alpha), 2)
-        enviroment_memory['moisture'] = round(env.moisture_func( t_days, pump, alpha), 2)
-        enviroment_memory['time'] = datetime.now().isoformat()
-        ready_event.set()
-        time.sleep(1)
