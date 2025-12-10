@@ -24,8 +24,10 @@ class Sensor:
         self.locTempNoise = random.uniform(-1,1)
         #locational noise for each sensor
     async def getValue(self):
-        message = (json.dumps(self.enviroment_memory) + "\n").encode("utf-8")
-        return message
+        messageObject={"sensor_id":self.sensor_id,"sensor_type":self.sensor_type,"value":self.enviroment_memory[self.sensor_type],"time":self.enviroment_memory['time']}
+
+        serializedMessage = (json.dumps(messageObject) + "\n").encode("utf-8")
+        return serializedMessage
 
     def __str__(self):
         return f"""Sensor - {self.sensor_id}:
@@ -35,28 +37,19 @@ class Sensor:
         'locationalNoise':'{self.locTempNoise}'\n"""
 
 
-def sensor_process(stop_event: Event, sensor_id, sensor_type, enviroment_memory, host="127.0.0.1", port=5004, numberOfSensor:int=1):
-    sensors_list:List[Sensor]=[]
+def sensor_process(stop_event: Event, sensor_id, sensor_type, enviroment_memory, host="127.0.0.1", port=5004):
+    sensor=Sensor(sensor_id=sensor_id,sensor_type=sensor_type,enviroment_memory=enviroment_memory)
     async def async_worker():
         _, writer = await asyncio.open_connection(host, port)
         try:
             while not stop_event.is_set():
-                tasks = [sensor.getValue() for sensor in sensors_list]
-                readings = await asyncio.gather(*tasks)
-                for reading in readings:
-                    writer.write(reading)
+                reading= await sensor.getValue()
+                writer.write(reading)
                 await writer.drain()
                 await asyncio.sleep(1)
         finally:
             writer.close()
             await writer.wait_closed()
-    
-    if numberOfSensor>1:
-        for i in range(numberOfSensor):
-            sensors_list.append(Sensor(sensor_id=f"sensor_{sensor_type[0]}{i}",sensor_type=sensor_type,enviroment_memory=enviroment_memory))        
-        asyncio.run(async_worker())
-    else:
-        sensors_list.append(Sensor(sensor_id=sensor_id,sensor_type=sensor_type,enviroment_memory=enviroment_memory))
         asyncio.run(async_worker())
         
 

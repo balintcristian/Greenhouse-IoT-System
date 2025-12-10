@@ -138,6 +138,6 @@ def environment_process(enviroment_memory, ready_event, stop_event, time_acceler
         enviroment_memory['temperature'] = round(env.temperature_func(t_days, fan, heater, alpha), 2)
         enviroment_memory['humidity'] = round(env.humidity_func(t_days, humidifier, dehumidifier, alpha), 2)
         enviroment_memory['moisture'] = round(env.moisture_func( t_days, pump, alpha), 2)
-        enviroment_memory['time'] = datetime.now()
+        enviroment_memory['time'] = datetime.now().isoformat()
         ready_event.set()
         time.sleep(1)
