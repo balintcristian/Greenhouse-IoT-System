@@ -41,14 +41,11 @@ def main():
                     VALID_TYPES = ("temperature", "humidity", "moisture")
                     if len(cmd.split())<4:
                         _, sensor_id, sensor_type=cmd.split()
-                        host="127.0.0.1"
+                        host="192.168.0.38"
                         port=8883
                     else:
                          _, sensor_id, sensor_type,host,port = cmd.split()
-                         if not all(part.isdigit() for part in host.split(".")):
-                            invalid = True
-                            print("Ip format is wrong!")
-                         elif len(host.split("."))>4:
+                         if len(host.split("."))>4:
                             print("Ip length is wrong!")
                             invalid=True
                          if not all(c.isdigit() for c in port):

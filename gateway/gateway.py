@@ -1,5 +1,6 @@
 from collections import deque
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from typing import List
 from pydantic import BaseModel
 import datetime
@@ -9,8 +10,9 @@ import json
 import asyncio
 from contextlib import asynccontextmanager
 
-MQTT_BROKER = "127.0.0.1"
+MQTT_BROKER = "192.168.0.38"
 MQTT_PORT = 8883
+
 
 # Buffers per sensor type, storing last 100 readings
 temperature_data = deque(maxlen=100)
@@ -54,7 +56,16 @@ async def lifespan(app: FastAPI):
         print("App shutting down...")
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(CORSMiddleware,
+    allow_origins=["*"],  # OR change to your frontend IP
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"])
 @app.get("/")
+def HomeData1():
+    return list(temperature_data+humidity_data+moisture_data)
+
+@app.get("/sensors")
 def HomeData():
     return list(temperature_data+humidity_data+moisture_data)
 
