@@ -30,7 +30,7 @@ class Sensor:
             "sensor_id": self.sensor_id,
             "sensor_type": self.sensor_type,
             "value": self.enviroment_memory[self.sensor_type],
-            "time": self.enviroment_memory['time']
+            "time": str(self.enviroment_memory['time'])
         }
 
     def __str__(self):
@@ -39,9 +39,9 @@ class Sensor:
         'sensor_type':'{self.sensor_type}'\n"""
 
 
-def sensor_process( sensor_id, sensor_type, enviroment_memory,ready_event:Event,stop_event: Event, host="127.0.0.1", port=5004):
+def sensor_process( sensor_id, sensor_type, enviroment_memory,ready_event:Event,stop_event: Event, host="192.168.0.38", port=8883):
     sensor = Sensor(sensor_id=sensor_id, sensor_type=sensor_type, enviroment_memory=enviroment_memory)
-    client = mqtt.Client()
+    client = mqtt.Client(client_id=sensor_id,reconnect_on_failure=True,clean_session=False)
 
     def on_connect(client, userdata, flags, rc):
         if rc == 0:
@@ -56,10 +56,10 @@ def sensor_process( sensor_id, sensor_type, enviroment_memory,ready_event:Event,
         client.loop_start()  # run MQTT network loop in background thread
         try:
             while not stop_event.is_set():
-                reading = sensor.getValue()
+                reading = await sensor.getValue()
                 topic = f"sensors/{sensor.sensor_type}/{sensor.sensor_id}"
                 
-                res=client.publish(topic, json.dumps(reading),qos=1)
+                res=client.publish(topic,json.dumps(reading),qos=1)
                 if res.is_published():
                     print(f"Sensor {sensor_id} published: {reading}")
                 await asyncio.sleep(1)  # publish interval

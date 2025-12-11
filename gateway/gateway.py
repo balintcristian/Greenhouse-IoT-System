@@ -10,7 +10,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 MQTT_BROKER = "127.0.0.1"
-MQTT_PORT = 1883
+MQTT_PORT = 8883
 
 # Buffers per sensor type, storing last 100 readings
 temperature_data = deque(maxlen=100)
@@ -24,7 +24,7 @@ class Reading(BaseModel):
     sensor_id: str
     sensor_type: str  # 'temperature', 'humidity', 'moisture'
     value: float
-    time: datetime.datetime
+    time: str
 
 
 async def queue_consumer():
@@ -54,9 +54,23 @@ async def lifespan(app: FastAPI):
         print("App shutting down...")
 
 app = FastAPI(lifespan=lifespan)
+@app.get("/")
+def HomeData():
+    return list(temperature_data+humidity_data+moisture_data)
 
 @app.get("/sensors/{sensor_type}")
-async def get_sensor_type_data(sensor_type: str, sensor_id: str|None = None):
+async def get_sensor_type_data(sensor_type: str):
+    buffer_map = {
+        "temperature": temperature_data,
+        "humidity": humidity_data,
+        "moisture": moisture_data
+    }
+    buffer = buffer_map.get(sensor_type.lower())
+    if buffer is None:
+        return {"error": "Invalid sensor type"}
+    return list(buffer)
+@app.get("/sensors/{sensor_type}/{sensor_id}")
+async def get_sensor_id_data(sensor_type: str,sensor_id:str):
 
     buffer_map = {
         "temperature": temperature_data,
