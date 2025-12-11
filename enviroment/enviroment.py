@@ -23,7 +23,7 @@ class EnvironmentState:
         self.hum_tilt = 0.0
         self.moist_tilt = 0.0
 
-    def temperature_func(self, t_days, fan=False, heater=False, alpha=0.05):
+    def temperature_func(self, t_days, fan=False, heater=False, alpha=0.05,thermal_inertia=0.1):
         """
         Realistic Earth-like temperature function with wide but realistic variations.
         """
@@ -51,18 +51,23 @@ class EnvironmentState:
         # Combine
         temp = BASE_TEMP + seasonal + daily + noise
 
-        # Gradual fan/heater tilt
+        # Aplică Gradual fan/heater tilt la temp_target
         target_delta = 0
         if fan: target_delta -= 3
         if heater: target_delta += 3
         self.temp_tilt += alpha * (target_delta - self.temp_tilt)
         temp += self.temp_tilt
-
+        
+        # Aplică Inerția Termică (Relaxare Exponențială către țintă)
+        # self.temperature este valoarea curentă
+        temp_change = thermal_inertia * (temp - self.temperature)
+        temp = self.temperature + temp_change
+        
         # Clamp to realistic Earth-like limits
         temp = max(min(temp, 50), -20)
 
         self.temperature = temp
-        return temp
+        return temp 
 
     def humidity_func(self, t_days, humidifier=False, dehumidifier=False, alpha=0.01):
         """Humidity depends on temperature, moisture, diurnal cycle, and gradual controls"""
