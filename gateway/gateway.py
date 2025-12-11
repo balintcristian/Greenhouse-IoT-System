@@ -80,10 +80,8 @@ async def get_sensor_id_data(sensor_type: str,sensor_id:str):
     buffer = buffer_map.get(sensor_type.lower())
     if buffer is None:
         return {"error": "Invalid sensor type"}
-    
-    if sensor_id!=None:
-        return [r for r in buffer if r.sensor_id == sensor_id]
-    return list(buffer)
+    return [r for r in buffer if r.sensor_id == sensor_id]
+
 
 @app.post("/add")
 async def add_data(item: Reading | List[Reading]):

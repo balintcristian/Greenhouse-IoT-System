@@ -1,8 +1,7 @@
 
 import math,random,asyncio,json
 from multiprocessing.synchronize import Event
-from typing import List
-import requests
+
 import paho.mqtt.client as mqtt
 
 VALID_TYPES = ("temperature", "humidity", "moisture")
