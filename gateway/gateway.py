@@ -19,7 +19,7 @@ col_temperature: Any
 col_humidity: Any
 col_moisture: Any
 
-MONGO_URI = "mongodb+srv://cb220820013141592:pScwTkwkZfsrwhZH@cluster0.mdey7y7.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://gateway:<password>@cluster0.mdey7y7.mongodb.net/?appName=Cluster0"
 mongo_client = None
 
 MQTT_BROKER = "192.168.0.38"
