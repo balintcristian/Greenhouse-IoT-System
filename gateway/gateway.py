@@ -6,9 +6,21 @@ from pydantic import BaseModel
 import datetime
 import uvicorn
 import paho.mqtt.client as mqtt
+from paho.mqtt.enums import CallbackAPIVersion
 import json
 import asyncio
 from contextlib import asynccontextmanager
+# OR for new PyMongo Async:
+from pymongo import AsyncMongoClient
+
+from typing import Any
+
+col_temperature: Any
+col_humidity: Any
+col_moisture: Any
+
+MONGO_URI = "mongodb+srv://cb220820013141592:pScwTkwkZfsrwhZH@cluster0.mdey7y7.mongodb.net/?appName=Cluster0"
+mongo_client = None
 
 MQTT_BROKER = "192.168.0.38"
 MQTT_PORT = 8883
@@ -44,6 +56,18 @@ async def queue_consumer():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown logic using async context manager."""
+    global mongo_client, col_temperature, col_humidity, col_moisture,MONGO_URI
+    mongo_client = AsyncMongoClient(MONGO_URI)
+    db = mongo_client["sensors"]
+    col_temperature = db["temperature"]
+    col_humidity = db["humidity"]
+    col_moisture = db["moisture"]
+    existing = await db.list_collection_names()
+    for name in ["temperature", "humidity", "moisture"]:
+        if name not in existing:
+            await db.create_collection(name)
+            print("Created collection:", name)
+
     loop = asyncio.get_running_loop()
     consumer_task = asyncio.create_task(queue_consumer())
     mqtt_task = asyncio.create_task(run_mqtt_client(loop))
@@ -52,6 +76,7 @@ async def lifespan(app: FastAPI):
     finally:
         mqtt_task.cancel()
         consumer_task.cancel()
+        await mongo_client.close()
         await asyncio.sleep(0)
         print("App shutting down...")
 
@@ -104,6 +129,14 @@ async def add_data(item: Reading | List[Reading]):
 
 async def run_mqtt_client(loop):
     """Connect to MQTT broker and push messages into async queue."""
+
+    async def save_to_mongo(reading: Reading):
+        if reading.sensor_type == "temperature":
+            await col_temperature.insert_one(reading.dict())
+        elif reading.sensor_type == "humidity":
+            await col_humidity.insert_one(reading.dict())
+        elif reading.sensor_type == "moisture":
+            await col_moisture.insert_one(reading.dict())
     def on_connect(client, userdata, flags, rc):
         if rc == 0:
             print("Connected to MQTT broker!")
@@ -115,21 +148,22 @@ async def run_mqtt_client(loop):
         try:
             data = json.loads(msg.payload.decode())
             reading = Reading(**data)
+            asyncio.run_coroutine_threadsafe(save_to_mongo(reading), loop)
             asyncio.run_coroutine_threadsafe(data_queue.put(reading), loop)
         except Exception as e:
             print(f"Error parsing MQTT message: {e}")
 
-    client = mqtt.Client()
+    client = mqtt.Client(CallbackAPIVersion.VERSION1)
     client.on_connect = on_connect
     client.on_message = on_message
     client.connect(MQTT_BROKER, MQTT_PORT, 60)
     await loop.run_in_executor(None, client.loop_forever)
 
-def start_fastapi(host="127.0.0.1", port=8000):
+def start_fastapi(host="192.168.0.38", port=8000):
     uvicorn.run("gateway:app", host=host, port=port, reload=False, workers=1, log_level="info")
 
 def main():
-    start_fastapi(host="127.0.0.1",port=8000)
+    start_fastapi(host="192.168.0.38",port=8000)
 
 if __name__ == "__main__":
     main()
