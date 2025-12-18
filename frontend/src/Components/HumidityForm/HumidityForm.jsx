@@ -1,4 +1,6 @@
-import React, { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
+let navigate = useNavigate();
 import {
   AreaChart,
   Area,
@@ -98,6 +100,14 @@ export default function HumidityDashboard(APIEndpoint) {
       <h1 className="text-3xl font-bold">Humidity Sensor Dashboard</h1>
 
       <div className="p-4 border rounded space-y-4">
+        <button
+          onClick={() => {
+            navigate("/");
+          }}
+          className="px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50"
+        >
+          Back
+        </button>
         <button
           onClick={fetchSensorData}
           disabled={loading}

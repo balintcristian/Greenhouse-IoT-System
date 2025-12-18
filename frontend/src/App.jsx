@@ -12,10 +12,10 @@ function App() {
     <Router>
       {/* <Header /> */}
       <Routes>
+        <Route path="*" element={<Header />} />
         <Route path="/humidity" element={<HumidityForm APIEndpoint={apiEndpoint} />} />
         <Route path="/moisture" element={<MoistureForm APIEndpoint={apiEndpoint} />} />
         <Route path="/temperature" element={<TemperatureForm APIEndpoint={apiEndpoint} />} />
-        <Route path="*" element={<Header />} />
       </Routes>
       {/* <Footer /> */}
     </Router>

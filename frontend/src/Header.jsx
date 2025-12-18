@@ -5,10 +5,7 @@ function Header() {
       <nav>
         <ul>
           <li>
-            <a href="">Home</a>
-          </li>
-          <li>
-            <a href="#">About</a>
+            <a href="/">Home</a>
           </li>
           <li>
             <a href="/humidity">Humidity Sensors</a>
