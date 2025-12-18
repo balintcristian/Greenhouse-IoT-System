@@ -12,7 +12,9 @@ from pymongo import AsyncMongoClient
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 from datetime import datetime
-
+import logging
+log = logging.getLogger("uvicorn")
+log.setLevel(logging.DEBUG)
 
 col_temperature: Any
 col_humidity: Any
@@ -49,14 +51,20 @@ async def queue_consumer(app: FastAPI):
 async def lifespan(app: FastAPI):
     """Startup and shutdown logic using async context manager."""
     global mongo_client, col_temperature, col_humidity, col_moisture,MONGO_URI
-    mongo_client = AsyncMongoClient(MONGO_URI)
-    db = mongo_client["sensors"]
-    col_temperature = db["temperature"]
-    col_humidity = db["humidity"]
-    col_moisture = db["moisture"]
-    existing = await db.list_collection_names()
+    existing=None
+    try:
+        mongo_client= AsyncMongoClient(MONGO_URI)
+        db = mongo_client["sensors"]
+        col_temperature = db["temperature"]
+        col_humidity = db["humidity"]
+        col_moisture = db["moisture"]
+    except Exception as e:
+        log.exception(e)
+    try:
+        existing = await db.list_collection_names()
+    except Exception as e:
+        log.exception(e)
 
-    
     app.state.temperature_data = deque(maxlen=100)
     app.state.humidity_data = deque(maxlen=100)
     app.state.moisture_data = deque(maxlen=100)
@@ -64,7 +72,7 @@ async def lifespan(app: FastAPI):
 
 
     for name in ["temperature", "humidity", "moisture"]:
-        if name not in existing:
+        if existing!=None and name not in existing:
             await db.create_collection(name)
             print("Created collection:", name)
 
@@ -76,7 +84,8 @@ async def lifespan(app: FastAPI):
     finally:
         mqtt_task.cancel()
         consumer_task.cancel()
-        await mongo_client.close()
+        if mongo_client !=None:
+            await mongo_client.close()
         print("App shutting down...")
 
 app = FastAPI(lifespan=lifespan)
