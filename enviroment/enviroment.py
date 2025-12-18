@@ -15,18 +15,14 @@ class EnvironmentState:
         self.humidity = 70.0
         self.moisture = random.uniform(300, 600)
 
-        self.time = datetime.now().isoformat()
+        self.time = time.time()
         self.start_time = time.time()
         self.start_day = 90
-
-        # Gradual control tilts
         self.temp_tilt = 0.0
         self.hum_tilt = 0.0
-        self.moist_tilt = 0.0  # NO LONGER unbounded
+        self.moist_tilt = 0.0
 
-    # ----------------------------------------------------
-    # KEEP EXACTLY YOUR TEMPERATURE MODEL
-    # ----------------------------------------------------
+
     def temperature_func(self, t_days, fan=False, heater=False, alpha=0.05, thermal_inertia=0.1):
         lat_norm = abs(self.latitude) / 90.0
 
@@ -59,9 +55,6 @@ class EnvironmentState:
         self.temperature = temp
         return temp
 
-    # ----------------------------------------------------
-    # HUMIDITY MODEL — CLEANED UP
-    # ----------------------------------------------------
     def humidity_func(self, t_days, humidifier=False, dehumidifier=False, alpha=0.01):
         base_hum = 70 - 0.6 * max(self.temperature, 0)
 
@@ -83,9 +76,6 @@ class EnvironmentState:
         self.humidity = hum
         return hum
 
-    # ----------------------------------------------------
-    # EVAPORATION — REALISTIC SCALING
-    # ----------------------------------------------------
     def evaporation_rate(self, t_day):
         """Dynamic evaporation in mm/day with realistic baseline and diurnal cycle."""
         if self.moisture > 700:
@@ -111,16 +101,9 @@ class EnvironmentState:
         - pump_flow_units_per_sec: when pump ON, how many units/sec are added (tunable).
         - alpha: smoothing factor for a small gradual pump tilt (kept optional).
         """
-
-        # Initialize last_update_time on first call
         now_real = time.time()
-        if not hasattr(self, "_last_update_time"):
-            self._last_update_time = now_real
-            # small no-op to avoid huge dt on first call
-            dt_real = 1.0
-        else:
-            dt_real = max(0.0001, now_real - self._last_update_time)
-
+        dt_real = max(0.0001, now_real - self.time)
+        self.time=now_real
         # If you use time_acceleration somewhere else (t_sim), compute simulated dt:
         # If env loop computes t_sim = (time.time() - start_time) * time_acceleration,
         # then dt_sim = dt_real * time_acceleration.
@@ -160,9 +143,7 @@ class EnvironmentState:
         return moisture
 
 
-# ---------------------------------------------------------
-# IMPROVED ENVIRONMENT LOOP (same memory interaction)
-# ---------------------------------------------------------
+
 def enviroment_process(enviroment_memory, ready_event: Event, stop_event: Event, time_acceleration: float | None = None):
 
     env = EnvironmentState(latitude=45.0)
