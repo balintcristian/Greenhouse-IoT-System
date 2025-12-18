@@ -58,7 +58,7 @@ def main():
                     print(f"{sensor_id} already exists!")
                     continue
                 if sensor_type not in VALID_TYPES:
-                    print(f"{sensor_id} Wrong sensor type!")
+                    print(f"{sensor_type} Wrong sensor type!")
                     print(f"Valid types:{VALID_TYPES}")
                     continue
                 if invalid:
