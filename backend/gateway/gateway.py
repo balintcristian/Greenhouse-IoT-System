@@ -13,7 +13,6 @@ import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 from datetime import datetime
 import logging
-
 log = logging.getLogger("uvicorn")
 log.setLevel(logging.DEBUG)
 
@@ -99,6 +98,13 @@ app.add_middleware(CORSMiddleware,
 def HomeData1(request: Request):
     state = request.app.state
     return list(state.temperature_data)+list(state.humidity_data)+list(state.moisture_data)
+@app.get("/check")
+async def check(request: Request):
+    return {
+        "scheme": request.url.scheme,  # should be "https"
+        "client": request.client.host if request.client is not None else "No client", # real client IP
+        "forwarded_proto": request.headers.get("x-forwarded-proto")
+    }
 
 @app.get("/sensors")
 def HomeData(request: Request):
@@ -175,4 +181,4 @@ async def run_mqtt_client(loop,app):
     await loop.run_in_executor(None, client.loop_forever)
 
 if __name__ == "__main__":
-    uvicorn.run("gateway:app", host="192.168.0.38",port=8000, reload=False, workers=1, log_level="info")
+    uvicorn.run("gateway:app", host="192.168.0.38",port=8000, reload=False, workers=1, log_level="info", proxy_headers=True, forwarded_allow_ips="192.168.0.38")
