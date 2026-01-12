@@ -10,7 +10,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "src"),
-      host: "192.168.0.38",
     },
   },
 });
