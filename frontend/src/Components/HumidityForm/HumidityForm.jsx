@@ -1,6 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-let navigate = useNavigate();
 import {
   AreaChart,
   Area,
@@ -12,14 +11,15 @@ import {
   CartesianGrid,
 } from "recharts";
 
-export default function HumidityDashboard(APIEndpoint) {
+export default function HumidityDashboard({ APIEndpoint }) {
+  let navigate = useNavigate();
   const [sensorIds, setSensorIds] = useState([]);
   const [dataMap, setDataMap] = useState({});
   const [loading, setLoading] = useState(false);
-
+  console.log(`${APIEndpoint}/sensors/humidity/`);
   const fetchSensorIds = async () => {
     try {
-      const res = await fetch("/sensors/humidity/");
+      const res = await fetch(`${APIEndpoint}/sensors/humidity/`);
       const json = await res.json();
       console.log(json);
 
@@ -42,7 +42,7 @@ export default function HumidityDashboard(APIEndpoint) {
       const results = await Promise.all(
         sensorIds.map(async (id) => {
           try {
-            const res = await fetch(`/sensors/humidity/${id}`);
+            const res = await fetch(`${APIEndpoint}/sensors/humidity/${id}`);
             const json = await res.json();
             return Array.isArray(json) ? json : [];
           } catch (err) {
@@ -97,7 +97,7 @@ export default function HumidityDashboard(APIEndpoint) {
 
   return (
     <div className="p-6 space-y-6">
-      <h1 className="text-3xl font-bold">Humidity Sensor Dashboard</h1>
+      <h1 className="text-3xl font-bold">humidity Sensor Dashboard</h1>
 
       <div className="p-4 border rounded space-y-4">
         <button

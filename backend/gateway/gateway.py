@@ -176,4 +176,3 @@ async def run_mqtt_client(loop,app):
 
 if __name__ == "__main__":
     uvicorn.run("gateway:app", host="192.168.0.38",port=8000, reload=False, workers=1, log_level="info")
-

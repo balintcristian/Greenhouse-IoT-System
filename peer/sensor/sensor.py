@@ -30,7 +30,7 @@ class Sensor:
         return {
             "sensor_id": self.sensor_id,
             "sensor_type": self.sensor_type,
-            "value": self.enviroment_memory[self.sensor_type],
+            "value": self.enviroment_memory[self.sensor_type]+random.uniform(2,5),
             "time": self.enviroment_memory['time']
         }
 

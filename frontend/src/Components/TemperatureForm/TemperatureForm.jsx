@@ -1,6 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-let navigate = useNavigate();
 import {
   AreaChart,
   Area,
@@ -13,6 +12,7 @@ import {
 } from "recharts";
 
 export default function TemperatureDashboard({ APIEndpoint }) {
+  let navigate = useNavigate();
   const [sensorIds, setSensorIds] = useState([]);
   const [dataMap, setDataMap] = useState({});
   const [loading, setLoading] = useState(false);
