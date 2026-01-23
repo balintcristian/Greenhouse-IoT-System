@@ -97,7 +97,7 @@ export default function TemperatureDashboard({ APIEndpoint }) {
 
   return (
     <div className="p-6 space-y-6">
-      <h1 className="text-3xl font-bold">Temperature Sensor Dashboard</h1>
+      <h1 className="p-6 text-3xl font-bold">Temperature sensors dashboard</h1>
 
       <div className="p-4 border rounded space-y-4">
         <button

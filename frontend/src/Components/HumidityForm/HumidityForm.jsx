@@ -97,7 +97,7 @@ export default function HumidityDashboard({ APIEndpoint }) {
 
   return (
     <div className="p-6 space-y-6">
-      <h1 className="text-3xl font-bold">humidity Sensor Dashboard</h1>
+      <h1 className="text-3xl font-bold">Humidity sensors dashboard</h1>
 
       <div className="p-4 border rounded space-y-4">
         <button
