@@ -3,11 +3,12 @@ from collections import deque
 import asyncio
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import Union,List
 import uvicorn
 import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI,Request
+from fastapi.responses import HTMLResponse
 from pymongo import AsyncMongoClient
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
@@ -15,12 +16,11 @@ from datetime import datetime
 import logging
 log = logging.getLogger("uvicorn")
 log.setLevel(logging.DEBUG)
-
+from typing import cast
 col_temperature: Any
 col_humidity: Any
 col_moisture: Any
-
-MONGO_URI = "mongodb+srv://gw1:LFUks3r6xnFArtKF@cluster0.daspxne.mongodb.net/?appName=Cluster0"
+MONGO_URI = "mongodb+srv://a:a@cluster0.daspxne.mongodb.net/?appName=Cluster0"
 mongo_client = None
 
 MQTT_BROKER = "192.168.0.38"
@@ -32,6 +32,10 @@ class Reading(BaseModel):
     value: float
     time: datetime
 
+class Prediction(BaseModel):
+    sensor_type: str
+    real: float
+    prediction: float
 
 async def queue_consumer(app: FastAPI):
     """Consume readings from the async queue and push into the correct buffer."""
@@ -58,13 +62,14 @@ async def lifespan(app: FastAPI):
         col_temperature = db["temperature"]
         col_humidity = db["humidity"]
         col_moisture = db["moisture"]
+
     except Exception as e:
         log.exception(e)
     try:
         existing = await db.list_collection_names()
     except Exception as e:
         log.exception(e)
-
+    app.state.predictions = cast(list[Prediction], [])
     app.state.temperature_data = deque(maxlen=100)
     app.state.humidity_data = deque(maxlen=100)
     app.state.moisture_data = deque(maxlen=100)
@@ -79,6 +84,7 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     consumer_task = asyncio.create_task(queue_consumer(app))
     mqtt_task = asyncio.create_task(run_mqtt_client(loop,app))
+    
     try:
         yield
     finally:
@@ -110,8 +116,6 @@ async def check(request: Request):
 def HomeData(request: Request):
     state = request.app.state
     return list(state.temperature_data)+list(state.humidity_data)+list(state.moisture_data)
-
-
 @app.get("/sensors/{sensor_type}")
 async def get_sensor_type_data(sensor_type: str,request: Request):
     state = request.app.state
@@ -147,6 +151,60 @@ async def add_data(item: Reading | List[Reading],request:Request):
         await state.data_queue.put(r)
     return {"status": "ok"}
 
+@app.get("/ml")
+def get_ml_data(request:Request):
+    state = request.app.state
+    return state.predictions
+
+@app.get("/mqtt_buttons", response_class=HTMLResponse)
+async def mqtt_buttons_page():
+    html_content = """
+    <html>
+        <head>
+            <title>MQTT Button Dashboard</title>
+        </head>
+        <body>
+            <h1>MQTT Button Dashboard</h1>
+            <button onclick="sendMQTT('on')">On</button>
+            <button onclick="sendMQTT('off')">Off</button>
+            <p id="status">MQTT Status: <span id="mqtt_status">Disconnected</span></p>
+            
+            <!-- Include MQTT.js -->
+            <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+            <script>
+                // Connect to your MQTT broker
+                const brokerUrl = 'wss://crispy.tplinkdns.com/mqtt';
+                const client = mqtt.connect(brokerUrl);
+
+
+                client.on('connect', function () {
+                    console.log('Connected to MQTT broker!');
+                    document.getElementById('mqtt_status').innerText = 'Connected';
+                });
+
+                client.on('error', function (err) {
+                    console.error('MQTT error:', err);
+                    document.getElementById('mqtt_status').innerText = 'Error';
+                });
+
+                client.on('close', function () {
+                    console.log('MQTT connection closed');
+                    document.getElementById('mqtt_status').innerText = 'Disconnected';
+                });
+
+                function sendMQTT(button) {
+                    const topic = 'options';
+                    const message = button === 'on' ? 'on' : 'off';
+                    client.publish(topic, message);
+                    console.log(`Published ${message} to ${topic}`);
+                    document.getElementById('status').innerText = 'Last sent: ' + message;
+                }
+            </script>
+        </body>
+    </html>
+    """
+    return HTMLResponse(html_content)
+    
 async def run_mqtt_client(loop,app):
     """Connect to MQTT broker and push messages into async queue."""
 
@@ -161,16 +219,25 @@ async def run_mqtt_client(loop,app):
     def on_connect(client, userdata, flags, rc):
         if rc == 0:
             print("Connected to MQTT broker!")
-            client.subscribe("sensors/#")
+            client.subscribe("#")
         else:
             print(f"Failed to connect, return code {rc}")
 
     def on_message(client, userdata, msg):
         try:
-            data = json.loads(msg.payload.decode())
-            reading = Reading(**data)
-            asyncio.run_coroutine_threadsafe(save_to_mongo(reading), loop)
-            asyncio.run_coroutine_threadsafe(app.state.data_queue.put(reading), loop)
+
+            if msg.topic.startswith("sensors/"):
+                data = json.loads(msg.payload.decode())
+                reading = Reading(**data)
+                asyncio.run_coroutine_threadsafe(save_to_mongo(reading), loop)
+                asyncio.run_coroutine_threadsafe(app.state.data_queue.put(reading), loop)
+            elif msg.topic=="ml":
+                data = json.loads(msg.payload.decode())
+                pred = Prediction(**data)
+                app.state.predictions.append(pred)
+            else:
+                print(msg.payload)
+
         except Exception as e:
             print(f"Error parsing MQTT message: {e}")
 
