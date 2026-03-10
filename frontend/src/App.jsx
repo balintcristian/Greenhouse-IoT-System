@@ -7,7 +7,7 @@ import Header from "./Header";
 // import Footer from "./Footer";
 
 function App() {
-  const apiEndpoint = "https://crispy.tplinkdns.com";
+  const apiEndpoint = "https://cbuni.go.ro";
   return (
     <Router>
       {/* <Header /> */}
